@@ -1,0 +1,290 @@
+
+# load packages
+using JLD, Random, LinearAlgebra, Statistics, CSV, DataFrames, FreqTables, Distributions, Test 
+
+cd(@__DIR__) # change directory to the location of this script
+
+# Set random seed
+Random.seed!(1234); # for reproducibility
+
+function q1()
+
+    # Question 1 
+    # Part A
+    #i
+
+    #Draw uniform random numbers between -5 and 10 into a 10x7 matrix 
+    A = rand(Uniform(-5,10), 10, 7)
+
+    #ii. B10×7 - random numbers distributed N (−2,15) [st dev is 15] 
+    B = rand(Normal(-2,15), 10, 7)
+
+    #iii. C5×7 - the first 5 rows and first 5 columns of A and the last two columns and first 5 rows of B
+    C = hcat(A[1:5, 1:5], B[1:5, 6:7])
+
+    #iv. D10×7 - where Di,j = Ai,j if Ai,j ≤0, or 0 otherwise
+    D = min.(A, 0)
+
+    # Part B
+    #use a built in julia function to list the number of elements in A 
+    num_elements_A = length(A)
+
+    # Part C
+    #use a series of built in julia functions to list the number of unique elements in D 
+    num_unique_D = length(unique(D))
+
+    # Part D
+    #Using the reshape() function, create a new matrix called E which is the ‘vec’ operator2 applied to B
+    E = reshape(B, length(B), 1)
+    E = B[:] # Optional alternative way to do the same thing
+
+    # Part E
+    #Create a new array called F which is 3-dimensional and contains A in the first columnn of the third dimension and B in the second column of the third dimension
+    F = cat(A, B, dims = 3)
+
+    # Part F
+    #Use the permutedims() function to twist F so that it is now F2x10x7. save new matrix as F
+    F = permutedims(F, (3, 1, 2))
+
+    # Part g
+    # create a matrix G which is equal to the kronecker product of B and C.
+
+    G = kron(B, C) # the kronecker makes the new matrix as the product of the colunms and the product of the rows
+
+    # Now trying C and F
+    # G2 = kron(C, F)  you will recieve an error becaue the dimensions do not align
+
+    # Part H
+    #Save the matrices A, B, C, D, E, F and G as a .jld file named matrixpractice
+    save("matrixpractice.jld", "A", A, "B", B, "C", C, "D", D, "E", E, "F", F, "G", G)
+
+    # Part I
+    # save the matrices A, B, C, D as a jld file named first matrix
+    save("firstmatrix.jld", "A", A, "B", B, "C", C, "D", D)
+
+    # Part J
+    # export C as a csv file names Cmatrix.csv
+    CSV.write("Cmatrix.csv", DataFrame(C, :auto))
+
+    # Part K
+    #Export D as a tab-delimited .dat file called Dmatrix. You will first need to transform D into a DataFrame
+    CSV.write("Dmatrix.dat", DataFrame(D, :auto), delim = '\t')
+
+    # Part L
+    #Wrap a function definition around all of the code for question 1. Call the function q1().
+    #The function should have 0 inputs and should output the arrays A, B, C and D. At the
+    #very bottom of your script you should add the code A,B,C,D = q1() 
+
+return A, B, C, D
+end
+
+# Call the function: Shown at the end of the script
+
+#-------------------------------------------------------------------------
+# Problem 2 
+# Part A 
+function q2(A, B, C)
+    AB = zeros(size(A))
+    for row in 1:size(A, 1)
+        for col in 1:size(A, 2)
+            AB[row, col] = A[row, col] + B[row, col]
+        end
+    end
+    return AB
+
+    # Alternative way to do the same thing without loops
+    #AB = A .* B
+
+    # Part B
+    #Write a loop that creates a column vector called Cprime which contains only the elements of C that are between -5 and 5 (inclusive). 
+    #Create a vector called Cprime2 which does this calculation without a loop.
+    # find indices of C where value of C is between -5 and 5
+    Cprime = []
+    for c in 1:size(C, 2)
+        for r in 1:size(C, 1)
+            if C[r, c] >= -5 && C[r, c] <= 5
+                push!(Cprime, C[r, c])
+            end
+        end
+    end
+
+    # without loop 
+    # The 1:size(C,2) returns an error because it is not the correct way to get the axes of a matrix. Use axes(C,2) instead. 
+    Cprime = Float64[]
+     for c in axes(C,2)
+     for r in axes(C,1)
+        if C[r,c] >= -5 && C[r,c] <= 5
+            push!(Cprime, C[r,c])
+        end 
+    end
+
+    # without loop
+     Cprime2 = C[(C .>= -5) .& (C .<= 5)]
+
+    #Compare the two vectors
+     Cprime == Cprime2
+     if Cprime != Cprime2
+         @show size(Cprime)
+         @show size(Cprime2)
+         @show Cprime .== Cprime2
+         error("Cprime and Cprime 2 are not the same")
+     end
+
+    # Part C
+    X = zeros(15_169, 6, 5) #15_169 is 15,169 where _ acts as the comma
+    N = size(X, 1)
+    K = size(X, 2)
+    T = size(X, 3)
+     #N,K,T = 100, 6, 5 can also write like this
+
+    # ordering of the second dimension:
+
+    for i in axes(X, 1)
+        X[i, 1, :] .= 1.0
+        X[i, 5, :] .= rand(Binomial(20, 0.6))
+        X[i, 6, :] .= rand(Binomial(20, 0.5))
+        for t in axes(X,3)
+            X[i, 2, t] = rand() <= .75 * (6-t)/5
+            X[i, 3, t] = rand(Normal(15 + t - 1, 5*t-1))
+            X[i, 4, t] = rand(Normal(pi * (6 - t), 1/exp(1)))
+        end
+
+    end
+    # Part D 
+    # Use comprehensions to create a matrix β which K x T and whose elements across time 
+    #X = [t for t in 1:10]
+    β = zeros(K, T)
+    #β = [1:1.25:3]
+    β[1, :] = [1 + 0.25 * (t-1) for t in 1:T] # 1, 1.25, 1.5, 1.75, 2, 2.25
+    β[2, :] = [log(t) for t in 1:T] # ln(t)
+    β[3, :] = [-sqrt(t) for t in 1:T] # -sqrt(t)
+    β[4, :] = [exp(t) - exp(t+1) for t in 1:T] # e^t - e^(t+1)
+    β[5, :] = [t for t in 1:T] # t
+    β[6, :] = [t/3 for t in 1:T] #t/3
+    
+    # Part E
+    # Use comprehensions to create a matrix Y which is N x T and whose elements across time are generated as follows:
+    #Y[:, t] = X[:, :, t] * β[:, t] + ε
+    #where ε ∼ N(0, 0.36)
+    Y = zeros(N, T)
+    Y = [X[:, :, t] * β[:, t] .+ rand(Normal(0, 0.36), N) for t in 1:T]
+    Y = [x[:, :, t] * β[:, t] .+ rand(Normal(0, 0.36), N) for t in 1:T]
+    
+    # Part F
+    #Wrap a function definition around all of the code for question 2. Call the function
+    # Done at the end of script
+    # q2(A,B,C)
+    return nothing
+end  
+#---------------------------------------------------
+
+# Problem 3
+function q3()
+   
+    # Part A
+    #load the dataset from the file nlsw88.csv into julia as a DataFrame
+    df = DataFrame(CSV.File("nlsw88.csv"))
+    @show df[1:5, :] #show the first 5 rows of the dataframe
+    @show typeof(df[:, :grade])
+    #save as cleaned csv file
+    CSV.write("nlsw88_cleaned.csv", df)
+
+    # Part B
+    #percentage never married
+    @show mean(df[:, :never_married])
+
+    # Part C
+    @show freqtable(df[: , :race])
+
+    # Problem D
+    #create a matrix called summary stats that lists the stats
+    vars = names(df)
+    summary_stats = describe(df)
+    @show summary_stats
+
+    # Problem E
+    # cross tabulation of industry and occupation
+    @show freqtable(df[:, :industry], df[:, :occupation])
+
+    # Problem F
+    # get the mean within the groups of industry and occupation categories
+    df_sub = df[:, [:industry, :occupation, :wage]]
+    grouped = groupby(df_sub, [:industry, :occupation])
+    mean_wage = combine(grouped, :wage => mean => :mean_wage)
+    @show mean_wage
+
+    # Part g
+    # Call the function 
+    # Done at the end of the script
+    return nothing
+end
+
+#---------------------------------------------------
+
+# Problem 4
+# Parts B and C
+"""
+function matrixops(A, B)
+    performs the following operations matrices A and B:
+    1. computes the element wise product of A and B
+    2. computes the matrix product of A transpose and b
+    3. computes the sum of all elements of the sum of A and B
+"""
+    
+function matrixops(A::Array{Float64}, B::Array{Float64})
+    #part e check dimensionalityC
+    if size(A) != size(B)
+        error("matrices A and B must have the same dimensions")
+    end
+
+    #(i) eleemen wise product of A and b
+    out1 = A .* B
+    #(ii) matrix product of A' and b
+    out2 = A' * B
+    #(iii) sum of all elements of sum of A and B 
+    out3 = sum(A+B)
+    return nothing
+end
+# load firstmatrix.jld
+
+
+# Part A
+function q4()
+    #three ways to load the .jld file
+    @load "matrixpractice.jld"
+    #load("matrixpractice.jld", "A", "B", "C", "D") #specify which matrices to load
+    #@load "matrixpractice.jld" A B C D #specify which matrices to load
+    
+    # Part D
+    matrixops(A, B)
+
+    # Part F
+    try
+        matrixops(A, C) #this should throw an error because the dimensions do not align
+    catch e 
+        @show e
+    end
+
+    # Part G
+    #read in csv
+    nlsw88    = DataFrame(CSV.File("nlsw88_cleaned.csv"))
+    ttl_exp = convert(Array, nlsw88.ttl_exp)
+    wage    = convert(Array, nlsw88.wage)
+    matrixops(ttl_exp, wage)
+
+
+    return nothing
+end
+
+
+#call the function from q1
+A, B, C, D = q1()
+
+# call the function from q2
+q2(A, B, C)
+
+#call the function from q3
+q3()
+
+#call the function from q4
+q4()
