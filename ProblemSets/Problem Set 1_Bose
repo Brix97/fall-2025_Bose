@@ -2,7 +2,7 @@
 # load packages
 using JLD, Random, LinearAlgebra, Statistics, CSV, DataFrames, FreqTables, Distributions, Test 
 
-cd(@__DIR__) # change directory to the location of this script
+cd(@__DIR__) # set the working directory to the location of this script
 
 # Set random seed
 Random.seed!(1234); # for reproducibility
@@ -11,7 +11,6 @@ function q1()
 
     # Question 1 
     # Part A
-    #i
 
     #Draw uniform random numbers between -5 and 10 into a 10x7 matrix 
     A = rand(Uniform(-5,10), 10, 7)
