@@ -106,6 +106,8 @@ println("Logit parameter estimates using glm are ", coef(alpha_hat_glm))
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
 # question 5
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
+using DataFrames, FreqTables, Optim, LinearAlgebra
+
 freqtable(df, :occupation) # note small number of obs in some occupations
 df = dropmissing(df, :occupation)
 df[df.occupation.==8 ,:occupation] .= 7
@@ -129,23 +131,32 @@ end
 
 function log_like(alpha)
     bigAlpha = [reshape(alpha, K, J-1) zeros(K)]  # append zeros for the reference category
-    num = zeros(N,J)
-    dem = zeros(N)
-    for j = 1:(J-1)
-        num[:, j] = exp.(X * bigAlpha[:, j])
-        dem += num[:, j]
-    end 
-
-    num[:, J] .= 1.0  # num for the reference category
-    P = num./repeat(dem, 1, J)  # choice probabilities
-    loglike = -sum(bigY.*log.(P))  # log-likelihood (negative for minimization
-
+    
+    # Calculate linear indices for all alternatives
+    linear_indices = X * bigAlpha  # N × J matrix
+    
+    # Calculate probabilities using stable computation
+    # Subtract max for numerical stability
+    max_vals = maximum(linear_indices, dims=2)  # N × 1
+    exp_vals = exp.(linear_indices .- max_vals)  # N × J
+    
+    # Sum across alternatives for denominator
+    dem = sum(exp_vals, dims=2)  # N × 1
+    
+    # Choice probabilities
+    P = exp_vals ./ dem  # N × J
+    
+    # Ensure no zero probabilities (add small epsilon)
+    P = max.(P, 1e-15)
+    
+    # Log-likelihood (negative for minimization)
+    loglike = -sum(bigY .* log.(P))
+    
     return loglike
-
 end 
 
 # Starting values
-alpha_zero= zeros(K*(J-1))
+alpha_zero = zeros(K*(J-1))
 alpha_rand = rand(K*(J-1))
 alpha_true = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
     # Age coefficients for occupations 1-6  
@@ -169,8 +180,8 @@ println("\nOptimizing with informed starting values...")
 result_true = optimize(log_like, alpha_true, BFGS(),
                       Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
 
-results = [("Zero start", result_zero), ("Random start", result_rand), ("Informed start", result_true)]
-
+# FIXED: Add names to the results for the loop
+results = [("Zero start", result_zero), ("Small random start", result_rand), ("Small informed start", result_true)]
 
 println("\n" * "="^60)
 println("COMPARISON OF RESULTS")
@@ -237,7 +248,7 @@ if best_result !== nothing
     # Model fit statistics
     println("\nModel Fit Statistics:")
     
-    # Calculate null model log-likelihood
+    # Calculate null model log-likelihood (intercept-only model)
     null_loglike = 0.0
     for j in 1:J
         pj = sum(y .== j) / N
@@ -247,7 +258,18 @@ if best_result !== nothing
     end
     
     model_loglike = -best_result.minimum
+    
+    # Check if results make sense
+    if model_loglike > 0 || null_loglike > 0
+        println("  WARNING: Positive log-likelihood detected - check model specification!")
+    end
+    
     pseudo_r2 = 1 - model_loglike / null_loglike
+    
+    # Ensure pseudo R² is reasonable (between 0 and 1)
+    if pseudo_r2 < 0 || pseudo_r2 > 1
+        println("  WARNING: Pseudo R² outside valid range [0,1] - model may have issues!")
+    end
     
     println("  Null log-likelihood: $(round(null_loglike, digits=4))")
     println("  Model log-likelihood: $(round(model_loglike, digits=4))")
