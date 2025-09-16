@@ -68,46 +68,40 @@ XtX  = Symmetric(X' * X)
 VCOV = σ2 * inv(XtX) # or numerically better: σ2 * (XtX \ I(size(XtX,1)))
 
 # Standard errors = sqrt of diagonal elements
-se = sqrt.(diag(VCOV))
+se = sqrt.(diag(VCOV))my 
 println("Standard errors are: ", se)
 
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
 # question 3
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
 
-# Logit log-likelihood function
 function logit(alpha, X, d)
-    Xb = X * alpha
-    p = 1 ./ (1 .+ exp.(-Xb))
-    loglike = sum(d .* log.(p) .+ (1 .- d) .* log.(1 .- p))
+    Xa = X * alpha
+    p = 1 ./ (1 .+ exp.(-Xa)) 
+    loglike = sum(d .* log.(p) .+ (1 .- d) .* log.(1 .- p)) 
     return loglike
 end
 
-# Estimate logit parameters using Optim
-startval_logit = rand(size(X,2))
-result_logit = optimize(a -> -logit(a, X, y), startval_logit, LBFGS())
-println("Logit parameter estimates: ", Optim.minimizer(result_logit))
-println("Maximum log-likelihood: ", -Optim.minimum(result_logit))
+# AI Suggested alternative: Claude
+function logit(alpha, X, d)
+    Xa = X * alpha
+    loglike = sum(d .* Xa - log.(1 .+ exp.(Xa)))
+    return loglike
 end
 
-# Prepare data
-X = [ones(size(df,1),1) df.age df.race.==1 df.collgrad.==1]  # predictors
-y = df.married.==1                                           # binary outcome
+ans_logit = optimize(a -> -logit(a, X, y), rand(size(X,2)), LBFGS())
+println("Logit parameter estimates are ", Optim.minimizer(ans_logit))
+println("Maximum log-likelihood is ", -Optim.minimum(ans_logit))
 
-# Initial guess for parameters
-startval_logit = rand(size(X,2))
-
-# Estimate parameters by maximizing log-likelihood (minimize negative log-likelihood)
-result_logit = optimize(a -> -logit(a, X, y), startval_logit, LBFGS())
-
-# Print results
-println("Logit parameter estimates: ", Optim.minimizer(result_logit))
-println("Maximum log-likelihood: ", -Optim.minimum(result_logit))
+alpha_hat_glm = optimize(a -> -logit(a, X, y), rand(size(X,2)), LBFGS()), Optim.Options(g_tol=1e-6, iterations=100_000, show_trace=true))
+println("Logit parameter estimates are ", Optim.minimizer(alpha_hat_glm))
 
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
 # question 4
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
-# see Lecture 3 slides for example
+
+alpha_hat_glm = glm(@formula(married ~ age + white + collgrad), df, Binomial(), LogitLink())
+println("Logit parameter estimates using glm are ", coef(alpha_hat_glm))
 
 #:::::::::::::::::::::::::::::::::::::::::::::::::::
 # question 5
@@ -125,13 +119,149 @@ freqtable(df, :occupation) # problem solved
 X = [ones(size(df,1),1) df.age df.race.==1 df.collgrad.==1]
 y = df.occupation
 
-function mlogit(alpha, X, d)
-     # Compute linear predictor
-    Xb = X * alpha
-    # Compute predicted probabilities
-    p = 1 ./ (1 .+ exp.(-Xb))
-    # Compute log-likelihood
-    loglike = sum(d .* log.(p) .+ (1 .- d) .* log.(1 .- p))
-    return loglike
+N = size(X, 1)  # number of observations
+K = size(X, 2)  # number of covariates
+J = length(unique(y))  # number of choice alternatives: 7 occupations 
+bigY = zeros(N, J)  # one-hot encoded matrix of choices
+for j = 1:J 
+    bigY[:, j] = (y .== j)
 end
 
+function log_like(alpha)
+    bigAlpha = [reshape(alpha, K, J-1) zeros(K)]  # append zeros for the reference category
+    num = zeros(N,J)
+    dem = zeros(N)
+    for j = 1:(J-1)
+        num[:, j] = exp.(X * bigAlpha[:, j])
+        dem += num[:, j]
+    end 
+
+    num[:, J] .= 1.0  # num for the reference category
+    P = num./repeat(dem, 1, J)  # choice probabilities
+    loglike = -sum(bigY.*log.(P))  # log-likelihood (negative for minimization
+
+    return loglike
+
+end 
+
+# Starting values
+alpha_zero= zeros(K*(J-1))
+alpha_rand = rand(K*(J-1))
+alpha_true = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
+    # Age coefficients for occupations 1-6  
+    0.01, -0.01, 0.02, -0.02, 0.01, -0.01,
+    # Race coefficients for occupations 1-6
+    0.1, -0.1, 0.2, -0.2, 0.1, -0.1,
+    # College coefficients for occupations 1-6
+    0.5, -0.5, 0.3, -0.3, 0.4, -0.4
+]
+
+# Optimization with different starting values
+println("Optimizing with zero starting values...")
+result_zero = optimize(loglike_func, alpha_zero, BFGS(), 
+                      Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
+
+println("\nOptimizing with random starting values...")
+result_rand = optimize(loglike_func, alpha_rand, BFGS(),
+                      Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
+
+println("\nOptimizing with informed starting values...")
+result_true = optimize(loglike_func, alpha_true, BFGS(),
+                      Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
+
+results = [result_zero, result_rand, result_true]
+
+println("\n" * "="^60)
+println("COMPARISON OF RESULTS")
+println("="^60)
+
+best_result = nothing
+best_loglike = Inf
+
+for (name, result) in results
+    converged = Optim.converged(result)
+    final_loglike = result.minimum
+    
+    println("\n$name:")
+    println("  Converged: $converged")
+    println("  Final negative log-likelihood: $(round(final_loglike, digits=4))")
+    println("  Function evaluations: $(result.f_calls)")
+    
+    if final_loglike < best_loglike && converged
+        best_loglike = final_loglike
+        best_result = result
+    end
+end
+
+# Display best results
+if best_result !== nothing
+    println("\n" * "="^60)
+    println("BEST MODEL RESULTS")
+    println("="^60)
+    
+    alpha_hat = best_result.minimizer
+    bigAlpha_hat = [reshape(alpha_hat, K, J-1) zeros(K)]
+    
+    println("Final negative log-likelihood: $(round(best_result.minimum, digits=4))")
+    println("Final log-likelihood: $(round(-best_result.minimum, digits=4))")
+    
+    # Display coefficient matrix
+    println("\nEstimated coefficients (bigAlpha matrix):")
+    println("Rows: [Intercept, Age, Race=1, College=1]") 
+    println("Columns: Occupations 1-$(J-1), $(J) (reference)")
+    
+    covariate_names = ["Intercept", "Age", "Race=1", "College=1"]
+    
+    # Header
+    print(rpad("", 12))
+    for j in 1:J
+        if j == J
+            print(rpad("Occ$j(ref)", 10))
+        else
+            print(rpad("Occ$j", 10))
+        end
+    end
+    println()
+    
+    # Coefficients
+    for k in 1:K
+        print(rpad(covariate_names[k], 12))
+        for j in 1:J
+            coef_val = round(bigAlpha_hat[k,j], digits=4)
+            print(rpad(string(coef_val), 10))
+        end
+        println()
+    end
+    
+    # Model fit statistics
+    println("\nModel Fit Statistics:")
+    
+    # Calculate null model log-likelihood
+    null_loglike = 0.0
+    for j in 1:J
+        pj = sum(y .== j) / N
+        if pj > 0
+            null_loglike += sum(y .== j) * log(pj)
+        end
+    end
+    
+    model_loglike = -best_result.minimum
+    pseudo_r2 = 1 - model_loglike / null_loglike
+    
+    println("  Null log-likelihood: $(round(null_loglike, digits=4))")
+    println("  Model log-likelihood: $(round(model_loglike, digits=4))")
+    println("  McFadden's Pseudo R²: $(round(pseudo_r2, digits=4))")
+    
+    # Information criteria
+    n_params = K * (J-1)
+    aic = -2 * model_loglike + 2 * n_params
+    bic = -2 * model_loglike + log(N) * n_params
+    
+    println("  AIC: $(round(aic, digits=2))")
+    println("  BIC: $(round(bic, digits=2))")
+    println("  Number of parameters: $n_params")
+    println("  Number of observations: $N")
+    
+else
+    println("\nNo successful optimization found!")
+end
