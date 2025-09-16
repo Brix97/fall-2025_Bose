@@ -1,4 +1,4 @@
-using Optim, DataFrames, CSV, HTTP, GLM
+using Optim, DataFrames, CSV, HTTP, GLM, FreqTables, LinearAlgebra, Statistics, Distributions, Random
 
 cd(@__DIR__) # set the working directory to the location of this script
 
@@ -158,18 +158,19 @@ alpha_true = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
 
 # Optimization with different starting values
 println("Optimizing with zero starting values...")
-result_zero = optimize(loglike_func, alpha_zero, BFGS(), 
+result_zero = optimize(log_like, alpha_zero, BFGS(), 
                       Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
 
 println("\nOptimizing with random starting values...")
-result_rand = optimize(loglike_func, alpha_rand, BFGS(),
+result_rand = optimize(log_like, alpha_rand, BFGS(),
                       Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
 
 println("\nOptimizing with informed starting values...")
-result_true = optimize(loglike_func, alpha_true, BFGS(),
+result_true = optimize(log_like, alpha_true, BFGS(),
                       Optim.Options(g_tol=1e-5, iterations=1000, show_trace=true))
 
-results = [result_zero, result_rand, result_true]
+results = [("Zero start", result_zero), ("Random start", result_rand), ("Informed start", result_true)]
+
 
 println("\n" * "="^60)
 println("COMPARISON OF RESULTS")
