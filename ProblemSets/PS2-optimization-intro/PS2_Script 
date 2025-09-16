@@ -1,7 +1,10 @@
-using Random, LinearAlgebra
+using Random, LinearAlgebra, Distributions, Statistics, Optim, DataFrames, CSV, HTTP, GLM, FreqTables, ForwardDiff
 
-cd(@_DIR_)
+cd(@__DIR__)
 
-include("PS2_)
+# Read in the function
+include("PS2starter_Bose.jl")
 
+# Execute the function
 allwrap()
+
