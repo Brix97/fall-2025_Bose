@@ -205,32 +205,31 @@ Map future values from state space to actual data.
 """
 function compute_fvt1(df_long::DataFrame, 
                       FV::Array{Float64,3},
-                      xtran::Matrix, # state transition matrix
-                      Xstate::Vector, # mileage state for each observation
-                      Zstate::Vector, # route usage state for each observation
-                      xbin::Int,# number of mileage bins
-                      B) 
+                      xtran::Matrix,
+                      Xstate,
+                      Zstate,
+                      xbin::Int,
+                      B)
     
     # Get dimensions
     N = length(unique(df_long.bus_id))  # Adjust column name as needed
-    T =  20  # Number of time periods (assumed known)
+    T = 20
     
     # Initialize FVT1
     FVT1 = zeros(N, T)
     
-    # TODO: Loop over observations and time
-     for i in 1:N
-         # Compute row0 and row1 indices
-         row0 = (Zstate[i]-1)*xbin + 1
-         for t in 1:T
-                    row1 = row0 + Xstate[i,t] - 1
-             # Compute future value contribution
-                    FVT1[i,t] = dot((xtran[row1,:] .- xtran[row0,:]), FV[row0:row0+xbin-1, B[i]+1, t+1])
-            end
-     end
+    # Loop over observations and time (over states that were visited)
+    for i in 1:N
+        row0 = (Zstate[i]-1)*xbin + 1
+        for t in 1:T
+            row1 = row0 + Xstate[i,t] - 1
+            # Compute future value contribution
+            FVT1[i,t] =(xtran[row1, :] .- xtran[row0, :])⋅FV[row0:row0+xbin-1, B[i]+1, t+1]
+        end
+    end
     
-    # Convert to long format:Reshape FVT1 to a vector
-     fvt1_long = FVT1'[:]
+    # Reshape to long format
+    fvt1_long = FVT1'[:]
     
     return fvt1_long
 end
