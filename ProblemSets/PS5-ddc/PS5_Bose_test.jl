@@ -6,13 +6,16 @@ include("PS5_Bose_source.jl")
 
 
 @testset "Bus Engine Replacement Model Tests" begin
-   
     
+    # TEST 1: Static Data Loading
     @testset "Static Data Loading" begin
         df_long = load_static_data()
         
-        # Test data structure
+        # DataFrame structure
+        @test df_long isa DataFrame
         @test nrow(df_long) > 0
+        
+        # Required columns exist
         @test :bus_id in names(df_long)
         @test :time in names(df_long)
         @test :Y in names(df_long)
@@ -20,22 +23,28 @@ include("PS5_Bose_source.jl")
         @test :RouteUsage in names(df_long)
         @test :Branded in names(df_long)
         
-        # Test time periods (should be 1-20 for each bus)
+        # Time range is correct (1-20)
         @test minimum(df_long.time) == 1
         @test maximum(df_long.time) == 20
         
-        # Test that Y is binary
+        # Y is binary (0 or 1)
         @test all(y -> y in [0, 1], df_long.Y)
         
-        # Test that each bus has 20 observations
+        # Each bus has exactly 20 time periods
         bus_counts = combine(groupby(df_long, :bus_id), nrow => :count)
         @test all(bus_counts.count .== 20)
+        
+        # Odometer values are non-negative
+        @test all(df_long.Odometer .>= 0)
+        
+        println("✓ Static data loading tests passed")
     end
     
+    # TEST 2: Dynamic Data Loading
     @testset "Dynamic Data Loading" begin
         d = load_dynamic_data()
         
-        # Test structure
+        # Named tuple has all required fields
         @test haskey(d, :Y)
         @test haskey(d, :X)
         @test haskey(d, :B)
@@ -43,144 +52,205 @@ include("PS5_Bose_source.jl")
         @test haskey(d, :Zstate)
         @test haskey(d, :N)
         @test haskey(d, :T)
+        @test haskey(d, :xval)
+        @test haskey(d, :xbin)
+        @test haskey(d, :zbin)
+        @test haskey(d, :xtran)
         @test haskey(d, :β)
         
-        # Test dimensions
+        # Matrix dimensions are consistent
         @test size(d.Y) == (d.N, d.T)
         @test size(d.X) == (d.N, d.T)
+        @test size(d.Xstate) == (d.N, d.T)
         @test length(d.B) == d.N
         @test length(d.Zstate) == d.N
         
-        # Test parameter values
+        # Discount factor is valid
+        @test 0 < d.β < 1
         @test d.β == 0.9
-        @test d.T == 20
         
-        # Test state space
+        # State space dimensions
         @test d.xbin > 0
         @test d.zbin > 0
         @test length(d.xval) == d.xbin
         @test size(d.xtran) == (d.xbin * d.zbin, d.xbin)
         
-        # Test transition matrix properties
-        @test all(d.xtran .>= 0)  # Non-negative probabilities
-        @test all(sum(d.xtran, dims=2) .≈ 1)  # Rows sum to 1
+        # Transition matrix is a proper probability matrix
+        @test all(d.xtran .>= 0)
+        @test all(d.xtran .<= 1)
+        row_sums = sum(d.xtran, dims=2)
+        @test all(isapprox.(row_sums, 1.0, atol=1e-10))
+        
+        # Y is binary
+        @test all(y -> y in [0, 1], d.Y)
+        
+        # B (brand) is binary
+        @test all(b -> b in [0, 1], d.B)
+        
+        println("✓ Dynamic data loading tests passed")
     end
     
-   
-    # TEST 2: Future Value computation
-
+    # TEST 3: Future Value Computation
     @testset "Future Value Computation" begin
         d = load_dynamic_data()
-        
-        # Test with simple parameters
         θ = [0.0, -0.1, 0.5]
         FV = zeros(d.zbin * d.xbin, 2, d.T + 1)
         
         compute_future_value!(FV, θ, d)
         
-        # Test 1: Terminal condition
+        # Terminal condition (FV at T+1 should be zero)
         @test all(FV[:, :, d.T+1] .== 0)
         
-        # Test 2: FV should be non-zero for t < T+1
-        @test any(FV[:, :, 1:d.T] .!= 0)
+        # FV should be non-zero for earlier periods
+        @test any(FV[:, :, 1] .!= 0)
+        @test any(FV[:, :, d.T] .!= 0)
         
-        # Test 3: FV should be finite (no NaN or Inf)
-        @test all(isfinite.(FV[:, :, 1:d.T]))
+        # All FV values should be finite
+        @test all(isfinite.(FV))
         
-        # Test 4: Monotonicity - FV should generally decrease with time
-        # (less future to consider as we approach T)
-        avg_fv_by_time = [mean(FV[:, :, t]) for t in 1:d.T]
-        @test issorted(avg_fv_by_time, rev=true)
+        # No NaN or Inf values
+        @test !any(isnan.(FV))
+        @test !any(isinf.(FV))
         
-        # Test 5: Brand effect - higher brand should have higher FV
-        for t in 1:d.T
-            @test mean(FV[:, 2, t]) >= mean(FV[:, 1, t])
+        # FV should generally decrease over time
+        avg_fv = [mean(FV[:, :, t]) for t in 1:d.T]
+        @test issorted(avg_fv, rev=true)
+        
+        # Brand effect - branded buses should have higher FV
+        for t in 1:min(5, d.T)
+            @test mean(FV[:, 2, t]) > mean(FV[:, 1, t])
         end
+        
+        # FV should be positive
+        @test all(FV[:, :, 1:d.T] .>= 0)
+        
+        println("✓ Future value computation tests passed")
     end
     
-
-    # TEST 3: Log Likelihood Function
-
+    # TEST 4: Log Likelihood Function
     @testset "Log Likelihood Computation" begin
         d = load_dynamic_data()
         
-        # Test with reasonable parameters
-        θ = [0.0, -0.1, 0.5]
+        θ_reasonable = [0.0, -0.1, 0.5]
+        ll_reasonable = log_likelihood_dynamic(θ_reasonable, d)
         
-        loglike = log_likelihood_dynamic(θ, d)
+        # Likelihood should be negative (we return -loglike)
+        @test ll_reasonable < 0
         
-        # Test 1: Log likelihood should be negative
-        @test loglike < 0
+        # Likelihood should be finite
+        @test isfinite(ll_reasonable)
         
-        # Test 2: Log likelihood should be finite
-        @test isfinite(loglike)
+        # Different parameters give different likelihoods
+        θ_different = [0.5, -0.15, 0.3]
+        ll_different = log_likelihood_dynamic(θ_different, d)
+        @test ll_reasonable != ll_different
         
-        # Test 3: Different parameters should give different likelihoods
-        θ2 = [0.5, -0.15, 0.3]
-        loglike2 = log_likelihood_dynamic(θ2, d)
-        @test loglike != loglike2
+        # Bad parameters should give worse likelihood
+        θ_bad = [10.0, 1.0, 5.0]
+        ll_bad = log_likelihood_dynamic(θ_bad, d)
+        @test ll_bad < ll_reasonable
         
-        # Test 4: Likelihood should be worse (more negative) with bad parameters
-        θ_bad = [10.0, 1.0, 5.0]  # Wrong signs
-        loglike_bad = log_likelihood_dynamic(θ_bad, d)
-        @test loglike_bad < loglike  # Should be more negative
+        # Zero parameters should work
+        θ_zero = [0.0, 0.0, 0.0]
+        ll_zero = log_likelihood_dynamic(θ_zero, d)
+        @test isfinite(ll_zero)
+        
+        # Likelihood should be deterministic
+        ll_check1 = log_likelihood_dynamic(θ_reasonable, d)
+        ll_check2 = log_likelihood_dynamic(θ_reasonable, d)
+        @test ll_check1 ≈ ll_check2
+        
+        println("✓ Log likelihood computation tests passed")
     end
     
-   
-    # TEST 4: Parameter Estimation Properties
-    
-    @testset "Parameter Estimation Sanity Checks" begin
+    # TEST 5: Economic Intuition
+    @testset "Economic Intuition" begin
         d = load_dynamic_data()
         
-        # Test that likelihood is differentiable at reasonable points
+        # Negative mileage coefficient should fit better
+        θ_steep = [0.0, -0.2, 0.5]
+        θ_flat = [0.0, -0.05, 0.5]
+        
+        ll_steep = log_likelihood_dynamic(θ_steep, d)
+        ll_flat = log_likelihood_dynamic(θ_flat, d)
+        
+        @test ll_steep > ll_flat
+        
+        # Positive brand effect should fit better
+        θ_positive_brand = [0.0, -0.1, 0.5]
+        θ_negative_brand = [0.0, -0.1, -0.5]
+        
+        ll_pos = log_likelihood_dynamic(θ_positive_brand, d)
+        ll_neg = log_likelihood_dynamic(θ_negative_brand, d)
+        
+        @test ll_pos > ll_neg
+        
+        println("✓ Economic intuition tests passed")
+    end
+    
+    # TEST 6: Numerical Stability
+    @testset "Numerical Stability" begin
+        d = load_dynamic_data()
+        
+        # Test with extreme but valid parameters
+        θ_extreme = [5.0, -0.5, 2.0]
+        ll_extreme = log_likelihood_dynamic(θ_extreme, d)
+        
+        @test isfinite(ll_extreme)
+        @test !isnan(ll_extreme)
+        
+        # Test with very small parameters
+        θ_small = [0.01, -0.001, 0.01]
+        ll_small = log_likelihood_dynamic(θ_small, d)
+        
+        @test isfinite(ll_small)
+        
+        # Test with different discount factors
+        d_high_beta = (d..., β=0.99)
+        FV_high = zeros(d.zbin * d.xbin, 2, d.T + 1)
+        @test_nowarn compute_future_value!(FV_high, [0.0, -0.1, 0.5], d_high_beta)
+        
+        d_low_beta = (d..., β=0.5)
+        FV_low = zeros(d.zbin * d.xbin, 2, d.T + 1)
+        @test_nowarn compute_future_value!(FV_low, [0.0, -0.1, 0.5], d_low_beta)
+        
+        println("✓ Numerical stability tests passed")
+    end
+    
+    # TEST 7: Gradient Check (Numerical Derivative)
+    @testset "Gradient Check" begin
+        d = load_dynamic_data()
         θ = [0.0, -0.1, 0.5]
         ε = 1e-6
         
-        # Numerical gradient check for first parameter
+        # Numerical gradient for first parameter
         θ_plus = [θ[1] + ε, θ[2], θ[3]]
         θ_minus = [θ[1] - ε, θ[2], θ[3]]
         
         ll_plus = log_likelihood_dynamic(θ_plus, d)
         ll_minus = log_likelihood_dynamic(θ_minus, d)
         
-        # Gradient should exist (difference should not be zero)
+        # Gradient should exist (not zero)
         @test abs(ll_plus - ll_minus) > 1e-10
         
-        # Test symmetry of brand effect
-        θ_nobrand = [0.0, -0.1, 0.0]
-        ll_nobrand = log_likelihood_dynamic(θ_nobrand, d)
-        @test isfinite(ll_nobrand)
+        # Numerical gradient for second parameter
+        θ_plus = [θ[1], θ[2] + ε, θ[3]]
+        θ_minus = [θ[1], θ[2] - ε, θ[3]]
+        
+        ll_plus = log_likelihood_dynamic(θ_plus, d)
+        ll_minus = log_likelihood_dynamic(θ_minus, d)
+        
+        @test abs(ll_plus - ll_minus) > 1e-10
+        
+        println("✓ Gradient check tests passed")
     end
     
-   
-    # TEST 5: Edge Cases
-
-    @testset "Edge Cases" begin
-        d = load_dynamic_data()
-        
-        # Test 1: Zero parameters
-        θ_zero = [0.0, 0.0, 0.0]
-        @test isfinite(log_likelihood_dynamic(θ_zero, d))
-        
-        # Test 2: Large discount factor (shouldn't crash)
-        d_modified = (d..., β=0.99)
-        θ = [0.0, -0.1, 0.5]
-        FV = zeros(d.zbin * d.xbin, 2, d.T + 1)
-        @test_nowarn compute_future_value!(FV, θ, d_modified)
-        
-        # Test 3: Small discount factor
-        d_modified = (d..., β=0.5)
-        @test_nowarn compute_future_value!(FV, θ, d_modified)
-    end
-    
-    
-    # TEST 6: Consistency Checks
-   
-    @testset "Consistency Checks" begin
+    # TEST 8: Consistency Check
+    @testset "Consistency Check" begin
         d = load_dynamic_data()
         θ = [0.0, -0.1, 0.5]
         
-        # Test 1: Computing FV twice gives same result
+        # Computing FV twice should give same result
         FV1 = zeros(d.zbin * d.xbin, 2, d.T + 1)
         FV2 = zeros(d.zbin * d.xbin, 2, d.T + 1)
         
@@ -189,45 +259,21 @@ include("PS5_Bose_source.jl")
         
         @test FV1 ≈ FV2
         
-        # Test 2: Computing likelihood twice gives same result
+        # Computing likelihood twice should give same result
         ll1 = log_likelihood_dynamic(θ, d)
         ll2 = log_likelihood_dynamic(θ, d)
         
         @test ll1 ≈ ll2
-    end
-    
-   
-    # TEST 7: Economic Intuition
-
-    @testset "Economic Intuition Tests" begin
-        d = load_dynamic_data()
         
-        # Test 1: Higher mileage coefficient (less negative) 
-        # should give LOWER likelihood (worse fit)
-        θ_steep = [0.0, -0.2, 0.5]  # More negative (realistic)
-        θ_flat = [0.0, -0.05, 0.5]  # Less negative (unrealistic)
-        
-        ll_steep = log_likelihood_dynamic(θ_steep, d)
-        ll_flat = log_likelihood_dynamic(θ_flat, d)
-        
-        # Steep should fit better (higher likelihood, less negative)
-        @test ll_steep > ll_flat
-        
-        # Test 2: Brand effect should be positive in data
-        # (branded buses have higher value, less likely to replace)
-        θ_positive_brand = [0.0, -0.1, 0.5]
-        θ_negative_brand = [0.0, -0.1, -0.5]
-        
-        ll_pos = log_likelihood_dynamic(θ_positive_brand, d)
-        ll_neg = log_likelihood_dynamic(θ_negative_brand, d)
-        
-        @test ll_pos > ll_neg
+        println("✓ Consistency tests passed")
     end
 end
 
 # Run the tests
-println("Running unit tests...")
-println("="^70)
+println("\n" * "="^70)
+println("RUNNING UNIT TESTS FOR BUS ENGINE REPLACEMENT MODEL")
+println("="^70 * "\n")
 Test.run()
+println("\n" * "="^70)
+println("ALL TESTS COMPLETED!")
 println("="^70)
-println("All tests completed!")

@@ -166,14 +166,14 @@ end
 # we are trying to estimate the betas and gamma parameters of the log likelihood function
 function mixed_logit_quad(theta, X, Z, y, R)
     # Extract parameters
-    theta = [alpha1, ..., alpha21, mu_gamma, sigma_gamma]
+    # theta = [alpha1, ..., alpha21, mu_gamma, sigma_gamma]
     K = size(X, 2)
     J = length(unique(y))
     N = length(y)
     
     alpha = theta[1:(K*(J-1))]  # coefficients on X
-    mu_gamma = theta[end-1]     # mean of gamma distribution
-    sigma_gamma = theta[end]    # std dev of gamma distribution
+    mu_gamma = theta[end-1]      # mean of gamma distribution
+    sigma_gamma = abs(theta[end])  # std dev of gamma distribution
     
     # Create choice indicator matrix
     bigY = zeros(N, J)
@@ -181,37 +181,44 @@ function mixed_logit_quad(theta, X, Z, y, R)
         bigY[:, j] = y .== j
     end
     
-    # Reshape alpha 
+    # Reshape alpha
     bigAlpha = [reshape(alpha, K, J-1) zeros(K)]
     
-    # Implement mixed logit with quadrature # This involves integrating over the distribution of gamma
-    # 1. Transform node: gamma_r = mu_gamma + sigma_gamma * nodes[r]
-    nodes7, weights7 = lgwt(R, mu_gamma-5*sigma_gamma, mu_gamma+5*sigma_gamma) # 7 points from -5*stddev to 5*stddev
+    # Implement mixed logit with quadrature
+    # Get quadrature nodes and weights
+    nodes7, weights7 = lgwt(R, mu_gamma - 5*sigma_gamma, mu_gamma + 5*sigma_gamma)
     
     # Initialize integrated probabilities
     T = promote_type(eltype(X), eltype(theta))
-    P_integrated = zeros(T, N, J)
+    P_integrated = zeros(T, N)
     
     # Loop through grid points to do summation via loop
-    for r in eachindex(nodes)
+    for r in eachindex(nodes7)
         num_r = zeros(T, N, J)  # numerator for this grid point
-        # gamma_r = mu_gamma + sigma_gamma * nodes[r]
+        
         # Compute probabilities for this gamma_r
         for j = 1:J
-            num_r[:,j] = exp.(X * bigAlpha[:,j] .+ nodes[r].* (Z[:,j] .- Z[:,J])) # nodes of r in the likelihood function
+            num_r[:,j] = exp.(X * bigAlpha[:,j] .+ nodes7[r] .* (Z[:,j] .- Z[:,J]))
         end
         
         # For every grid point, we compute the choice probabilities
-
         dem_r = sum(num_r, dims=2)
         P_r = num_r ./ dem_r
         
         # Weight and add to integrated probabilities
-        density_weight = weights[r] * pdf(Normal(mu_gamma,sigma_gamma), nodes[r])
-        P_integrated .+= (P_r .^ bigY) * density_weight # density weight is the weight for each grid point and is a scalar
+        density_weight = weights7[r] * pdf(Normal(mu_gamma, sigma_gamma), nodes7[r])
+        
+        # For each individual, accumulate the probability of their chosen alternative
+        for i = 1:N
+            # prod(P_r[i,:] .^ bigY[i,:]) gives P_i(chosen|gamma_r) since only one bigY[i,j]=1
+            P_integrated[i] += prod(P_r[i,:] .^ bigY[i,:]) * density_weight
+        end
     end
     
-    # Compute log-likelihood  
+    # Add small constant to avoid log(0)
+    P_integrated = max.(P_integrated, 1e-16)
+    
+    # Compute log-likelihood
     loglike = -sum(log.(P_integrated))
     
     return loglike
@@ -229,7 +236,7 @@ function mixed_logit_mc(theta, X, Z, y, D)
     
     alpha = theta[1:(K*(J-1))]
     mu_gamma = theta[end-1]
-    sigma_gamma = theta[end]
+    sigma_gamma = abs(theta[end])
     
     # Create choice indicator matrix
     bigY = zeros(N, J)
@@ -241,6 +248,7 @@ function mixed_logit_mc(theta, X, Z, y, D)
     
     # Implement mixed logit with Monte Carlo
     # Similar to quadrature but with random draws instead of nodes/weights
+
     b = mu_gamma + 5*sigma_gamma
     a = mu_gamma - 5*sigma_gamma
     draws = rand(D) * (b - a) .+ a  
@@ -248,6 +256,7 @@ function mixed_logit_mc(theta, X, Z, y, D)
     T = promote_type(eltype(X), eltype(theta))
     
     P_integrated = zeros(T, N, J)
+    gamma_dist = Normal(mu_gamma, sigma_gamma)
     
     for d = 1:D
         gamma_d = rand(gamma_dist)
@@ -283,10 +292,11 @@ function optimize_mlogit(X, Z, y)
     startvals = [2*rand(K*(J-1)).-1; 0.1]
 
     # Initialize the TwiceDifferentiable object for automatic differentiation
+    #Hint: Use LBFGS() algorithm with autodiff = :forward
     td = TwiceDifferentiable(theta -> mlogit_with_Z(theta, X, Z, y), startvals; autodiff = :forward) 
     # Julia interprets: as a symbol and autodiff does the differentiation automatically
 
-    #Hint: Use LBFGS() algorithm with autodiff = :forward
+    
     result = optimize(td,
                     startvals, LBFGS(), 
                     Optim.Options(g_tol = 1e-5, iterations=10,#iteration = 100_000 
@@ -390,7 +400,7 @@ function allwrap()
     println("\n=== ALL ANALYSES COMPLETE ===")
 end
 
-# TODO: Uncomment to run
+# Uncomment to run
 # allwrap()
 
 println("Starter code loaded successfully!")
