@@ -429,7 +429,7 @@ function main()
                           LBFGS(), 
                           Optim.Options(g_tol=1e-5, iterations=100, show_trace=true))
 
-    println("MLE estimates: ", α_hat_mle.minimizer)    # TODO: Estimate via GMM using MLE estimates as starting values
+    println("MLE estimates: ", α_hat_mle.minimizer)   
      α_hat_gmm_mle_start = optimize(a -> mlogit_gmm_overid(a, X, y), 
                                      α_hat_mle.minimizer, 
                                      LBFGS(), 
